@@ -1,0 +1,1056 @@
+<html lang="en">
+  <head>
+    <title>rustypaste-web</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      // Runs before the stylesheet paints, so a returning light-mode visitor
+      // never sees a flash of the (default) dark theme first. Dark itself
+      // needs no script — it's the CSS default with no attribute set.
+      (function () {
+        try {
+          if (localStorage.getItem("rp_theme") === "light") {
+            document.documentElement.setAttribute("data-theme", "light");
+          }
+        } catch (e) {
+          // localStorage unavailable, fall through to default (dark)
+        }
+      })();
+    </script>
+    <style>
+      :root {
+        --bg: #14161a;
+        --panel: #1e2126;
+        --panel2: #262a31;
+        --text: #e8e8e8;
+        --muted: #9aa0a8;
+        --border: #333941;
+        --accent: #eee;
+        --accent-text: #14161a;
+        --shadow: rgba(0, 0, 0, 0.35);
+        --ok: #4caf6f;
+        --err: #d9534f;
+        --warn-text: #e08a8a;
+        --code-bg: #14161a;
+        --header-bg: #0d0f12;
+      }
+      :root[data-theme="light"] {
+        --bg: #f2f2f2;
+        --panel: #fff;
+        --panel2: #f2f2f2;
+        --text: #222;
+        --muted: #666;
+        --border: #ddd;
+        --accent: #333;
+        --accent-text: #fff;
+        --shadow: rgba(0, 0, 0, 0.1);
+        --ok: #3a3;
+        --err: #b33;
+        --warn-text: #a55;
+        --code-bg: #f2f2f2;
+        --header-bg: #333;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        background-color: var(--bg);
+        color: var(--text);
+        font-family: arial, sans-serif;
+        margin: 0;
+        padding: 0;
+      }
+      pre {
+        background-color: var(--header-bg);
+        color: #fff;
+        font-size: 18px;
+        margin: 0;
+        overflow: auto;
+        padding: 20px;
+        padding-right: 60px;
+        white-space: pre-wrap;
+      }
+      h2 {
+        color: var(--text);
+        font-size: 20px;
+        margin: 20px 0 5px;
+      }
+      .wrap {
+        padding: 0 20px 40px;
+        max-width: 540px;
+      }
+      textarea,
+      input[type="text"],
+      input[type="password"],
+      input[type="file"] {
+        background-color: var(--panel);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        box-shadow: 0 0 5px var(--shadow);
+        font-family: arial, sans-serif;
+        font-size: 16px;
+        margin: 5px 0;
+        padding: 10px;
+        width: 100%;
+        max-width: 500px;
+        box-sizing: border-box;
+        display: block;
+      }
+      textarea {
+        min-height: 120px;
+        resize: vertical;
+      }
+      input[type="submit"], button {
+        background-color: var(--accent);
+        border: none;
+        border-radius: 5px;
+        box-shadow: 0 0 5px var(--shadow);
+        color: var(--accent-text);
+        cursor: pointer;
+        font-family: arial, sans-serif;
+        font-size: 15px;
+        padding: 10px 18px;
+        margin: 5px 8px 5px 0;
+        transition: background-color 0.2s ease-in-out, opacity 0.2s ease-in-out;
+      }
+      input[type="submit"]:hover, button:hover {
+        opacity: 0.85;
+      }
+      button:disabled {
+        background-color: var(--muted);
+        cursor: not-allowed;
+        opacity: 0.6;
+      }
+      button.secondary {
+        background-color: var(--panel);
+        color: var(--text);
+        border: 1px solid var(--border);
+        box-shadow: none;
+      }
+      button.secondary:hover {
+        background-color: var(--panel2);
+        opacity: 1;
+      }
+      button.danger {
+        background-color: var(--err);
+        color: #fff;
+      }
+      #result {
+        margin-top: 15px;
+        font-size: 14px;
+      }
+      .result-row {
+        background-color: var(--panel);
+        border-radius: 6px;
+        box-shadow: 0 0 5px var(--shadow);
+        padding: 12px 14px;
+        margin-bottom: 8px;
+        word-break: break-all;
+      }
+      .result-row.error {
+        border-left: 4px solid var(--err);
+      }
+      .result-row.ok {
+        border-left: 4px solid var(--ok);
+      }
+      .result-row a {
+        color: var(--text);
+      }
+      .result-pw {
+        margin-top: 6px;
+        font-family: monospace;
+        background: var(--code-bg);
+        border-radius: 4px;
+        padding: 6px 8px;
+        display: inline-block;
+      }
+      .warn {
+        color: var(--warn-text);
+        font-size: 12.5px;
+        margin-top: 4px;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 13px;
+        margin-top: -2px;
+      }
+      .copy-btn {
+        font-size: 12px;
+        padding: 4px 8px;
+        margin-left: 8px;
+        vertical-align: middle;
+      }
+      #dropZone {
+        border: 2px dashed var(--border);
+        border-radius: 8px;
+        padding: 30px;
+        text-align: center;
+        cursor: pointer;
+        margin: 10px 0;
+        max-width: 500px;
+        box-sizing: border-box;
+        color: var(--muted);
+        font-size: 15px;
+        transition: border-color 0.15s ease-in-out, background-color 0.15s ease-in-out;
+      }
+      #dropZone.dragover {
+        border-color: var(--text);
+        background-color: var(--panel2);
+      }
+      #dropZone.has-file {
+        border-style: solid;
+        color: var(--text);
+      }
+      #progressWrap {
+        max-width: 500px;
+        background-color: var(--panel2);
+        border-radius: 5px;
+        overflow: hidden;
+        margin-top: 10px;
+        display: none;
+      }
+      #progressBar {
+        height: 20px;
+        width: 0%;
+        background-color: var(--accent);
+        color: var(--accent-text);
+        font-size: 12px;
+        line-height: 20px;
+        text-align: center;
+        white-space: nowrap;
+        transition: width 0.1s linear;
+      }
+      .tokenRow {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+        max-width: 500px;
+      }
+      .tokenRow input[type="password"] {
+        flex: 1 1 260px;
+        margin: 5px 0;
+      }
+      .rememberLabel {
+        font-size: 13px;
+        color: var(--muted);
+        white-space: nowrap;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .tabs {
+        display: flex;
+        gap: 4px;
+        margin-top: 25px;
+        border-bottom: 2px solid var(--border);
+        max-width: 500px;
+        flex-wrap: wrap;
+      }
+      .tabBtn {
+        background: none;
+        box-shadow: none;
+        color: var(--muted);
+        border-radius: 6px 6px 0 0;
+        margin: 0;
+        padding: 8px 16px;
+        font-size: 14px;
+        border-bottom: 2px solid transparent;
+        position: relative;
+        top: 2px;
+      }
+      .tabBtn:hover {
+        background-color: var(--panel2);
+        color: var(--text);
+        opacity: 1;
+      }
+      .tabBtn.active {
+        background-color: var(--panel);
+        color: var(--text);
+        font-weight: bold;
+        border: 2px solid var(--border);
+        border-bottom: 2px solid var(--panel);
+      }
+      .tabPanel {
+        display: none;
+        background: var(--panel);
+        border-radius: 0 0 8px 8px;
+        padding: 20px;
+        max-width: 500px;
+        box-shadow: 0 0 5px var(--shadow);
+        box-sizing: border-box;
+      }
+      .tabPanel.active {
+        display: block;
+      }
+      .modeRow {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin: 8px 0;
+        font-size: 14px;
+      }
+      .modeRow label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        cursor: pointer;
+      }
+      .expiryRow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        max-width: 500px;
+        margin: 8px 0;
+        flex-wrap: wrap;
+      }
+      .expiryRow input[type="text"] {
+        max-width: 130px;
+        margin: 0;
+      }
+      .expiryRow label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 14px;
+        color: var(--text);
+      }
+      .manageBlock {
+        border-top: 1px solid var(--border);
+        padding-top: 14px;
+        margin-top: 14px;
+      }
+      .manageBlock:first-child {
+        border-top: none;
+        padding-top: 0;
+        margin-top: 0;
+      }
+      #unlockOutput {
+        margin-top: 10px;
+        max-height: 300px;
+        overflow: auto;
+        background: var(--code-bg);
+        border-radius: 6px;
+        padding: 10px;
+        font-family: monospace;
+        font-size: 13px;
+        white-space: pre-wrap;
+        word-break: break-all;
+        display: none;
+      }
+      .themeToggle {
+        position: fixed;
+        top: 14px;
+        right: 14px;
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        margin: 0;
+        border-radius: 50%;
+        font-size: 18px;
+        line-height: 40px;
+        text-align: center;
+        background-color: var(--panel);
+        color: var(--text);
+        border: 1px solid var(--border);
+        box-shadow: 0 0 5px var(--shadow);
+        z-index: 100;
+      }
+      .themeToggle:hover {
+        opacity: 0.85;
+      }
+      .fileList {
+        margin-top: 10px;
+      }
+      .fileRow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        background-color: var(--panel2);
+        border-radius: 6px;
+        padding: 8px 10px;
+        margin-bottom: 6px;
+        font-size: 13px;
+      }
+      .fileRow .fname {
+        flex: 1 1 160px;
+        min-width: 0;
+        word-break: break-all;
+        color: var(--text);
+      }
+      .fileRow .fmeta {
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .typeBadge {
+        display: inline-block;
+        font-size: 11px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background-color: var(--border);
+        color: var(--text);
+        white-space: nowrap;
+      }
+      .listControls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+      }
+      .listStatus {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      @media (max-width: 480px) {
+        .wrap {
+          padding: 0 12px 30px;
+        }
+        pre {
+          padding: 14px;
+          padding-right: 55px;
+          font-size: 14px;
+        }
+        .tabBtn {
+          padding: 8px 10px;
+          font-size: 13px;
+        }
+        .tabPanel {
+          padding: 14px;
+        }
+        button, input[type="submit"] {
+          padding: 10px 14px;
+        }
+        .themeToggle {
+          top: 10px;
+          right: 10px;
+          width: 34px;
+          height: 34px;
+          line-height: 34px;
+          font-size: 15px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <button class="themeToggle" id="themeToggle" title="toggle theme">🌙</button>
+    <pre>
+┬─┐┬ ┬┌─┐┌┬┐┬ ┬┌─┐┌─┐┌─┐┌┬┐┌─┐
+├┬┘│ │└─┐ │ └┬┘├─┘├─┤└─┐ │ ├┤
+┴└─└─┘└─┘ ┴  ┴ ┴  ┴ ┴└─┘ ┴ └─┘
+
+Private instance. Uploads require an auth token.
+Files auto-delete after 48 hours by default — uncheck the box before uploading to keep forever.
+    </pre>
+    <div class="wrap">
+      <h2>auth token</h2>
+      <div class="tokenRow">
+        <input type="password" id="authToken" placeholder="Auth Token" autocomplete="off" />
+        <label class="rememberLabel">
+          <input type="checkbox" id="rememberToken" /> remember on this device
+        </label>
+      </div>
+
+      <div class="tabs">
+        <button class="tabBtn active" data-tab="fileTab">File</button>
+        <button class="tabBtn" data-tab="textTab">Text</button>
+        <button class="tabBtn" data-tab="linksTab">Links</button>
+        <button class="tabBtn" data-tab="manageTab">Manage</button>
+      </div>
+
+      <!-- FILE TAB -->
+      <div class="tabPanel active" id="fileTab">
+        <p class="hint">Upload one or more files.</p>
+        <div id="dropZone">
+          <span id="dropZoneLabel">Drag &amp; drop file(s) here, or click to browse</span>
+          <input type="file" id="fileInput" multiple style="display: none" />
+        </div>
+
+        <div class="modeRow">
+          <label><input type="radio" name="fileMode" value="file" checked /> normal</label>
+          <label><input type="radio" name="fileMode" value="oneshot" /> one-shot (viewable once)</label>
+          <label><input type="radio" name="fileMode" value="protected" /> password-protected</label>
+        </div>
+
+        <input type="text" id="customNameFile" placeholder="custom name (optional, single file only)" autocomplete="off" />
+
+        <div class="expiryRow">
+          <label><input type="checkbox" id="expireCheckFile" checked /> auto-delete after</label>
+          <input type="text" id="expireValueFile" value="48hour" />
+        </div>
+
+        <button onclick="shareFile()">upload</button>
+        <div id="progressWrap"><div id="progressBar">0%</div></div>
+      </div>
+
+      <!-- TEXT TAB -->
+      <div class="tabPanel" id="textTab">
+        <p class="hint">Kept indefinitely by default.</p>
+        <textarea id="textInput" placeholder="paste text here"></textarea>
+        <input type="text" id="customNamePaste" placeholder="custom name (optional, e.g. notes.txt)" autocomplete="off" />
+        <div class="expiryRow">
+          <label><input type="checkbox" id="expireCheckText" /> auto-delete after</label>
+          <input type="text" id="expireValueText" value="48hour" />
+        </div>
+        <button onclick="sharePaste()">upload paste</button>
+      </div>
+
+      <!-- LINKS TAB -->
+      <div class="tabPanel" id="linksTab">
+        <p class="hint">Shorten a URL, make it one-shot, or have the server fetch &amp; host a remote file.</p>
+        <input type="text" id="urlInput" placeholder="https://example.com/some/long/url" autocomplete="off" />
+        <input type="text" id="customNameUrl" placeholder="custom name (optional)" autocomplete="off" />
+        <div class="expiryRow">
+          <label><input type="checkbox" id="expireCheckUrl" checked /> auto-delete after</label>
+          <input type="text" id="expireValueUrl" value="48hour" />
+        </div>
+        <button onclick="submitLink('url')">shorten</button>
+        <button onclick="submitLink('oneshot_url')">one-shot link</button>
+        <button onclick="submitLink('remote')">fetch &amp; host</button>
+      </div>
+
+      <!-- MANAGE TAB -->
+      <div class="tabPanel" id="manageTab">
+        <div class="manageBlock">
+          <h2 style="margin-top:0">browse &amp; delete</h2>
+          <p class="hint">
+            Password-protected files don't appear here — the server doesn't list them. Use
+            "delete by name/URL" below for those.
+          </p>
+          <div class="listControls">
+            <button class="secondary" onclick="refreshFileList()">refresh list</button>
+            <span class="listStatus" id="listStatus"></span>
+          </div>
+          <div class="fileList" id="fileList"></div>
+        </div>
+        <div class="manageBlock">
+          <h2 style="margin-top:0">delete by name or url</h2>
+          <p class="hint">Filename or full URL.</p>
+          <input type="text" id="deleteTarget" placeholder="myfile.zip or https://paste.example.com/myfile.zip" autocomplete="off" />
+          <button onclick="deleteFile()">delete</button>
+        </div>
+        <div class="manageBlock">
+          <h2 style="margin-top:0">unlock a protected file</h2>
+          <p class="hint">Protected links 404 in a normal browser click — use this instead.</p>
+          <input type="text" id="unlockTarget" placeholder="filename or full URL" autocomplete="off" />
+          <input type="password" id="unlockPassword" placeholder="password" autocomplete="off" />
+          <button onclick="unlockFile()">fetch</button>
+          <div id="unlockOutput"></div>
+        </div>
+      </div>
+
+      <div id="result"></div>
+    </div>
+
+    <script>
+      // ---------- theme handling ----------
+      const THEME_KEY = "rp_theme";
+
+      function currentTheme() {
+        return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+      }
+
+      function applyThemeIcon() {
+        document.getElementById("themeToggle").textContent = currentTheme() === "dark" ? "🌙" : "☀️";
+      }
+
+      function toggleTheme() {
+        const next = currentTheme() === "dark" ? "light" : "dark";
+        if (next === "dark") {
+          document.documentElement.removeAttribute("data-theme");
+        } else {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+        try {
+          localStorage.setItem(THEME_KEY, next);
+        } catch (e) {
+          // ignore
+        }
+        applyThemeIcon();
+      }
+
+      document.getElementById("themeToggle").addEventListener("click", toggleTheme);
+      applyThemeIcon();
+
+      // ---------- token handling ----------
+      const TOKEN_KEY = "rp_token";
+      const REMEMBER_KEY = "rp_remember";
+
+      function initToken() {
+        try {
+          const remembered = localStorage.getItem(REMEMBER_KEY) === "1";
+          document.getElementById("rememberToken").checked = remembered;
+          if (remembered) {
+            document.getElementById("authToken").value = localStorage.getItem(TOKEN_KEY) || "";
+          }
+        } catch (e) {
+          // localStorage unavailable, ignore silently
+        }
+      }
+
+      function persistTokenState() {
+        try {
+          const remember = document.getElementById("rememberToken").checked;
+          localStorage.setItem(REMEMBER_KEY, remember ? "1" : "0");
+          if (remember) {
+            localStorage.setItem(TOKEN_KEY, document.getElementById("authToken").value);
+          } else {
+            localStorage.removeItem(TOKEN_KEY);
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      document.getElementById("rememberToken").addEventListener("change", persistTokenState);
+      document.getElementById("authToken").addEventListener("input", persistTokenState);
+      initToken();
+
+      function getToken() {
+        const t = document.getElementById("authToken").value;
+        if (!t) {
+          alert("Please provide an Auth Token");
+          return null;
+        }
+        return t;
+      }
+
+      // ---------- tabs ----------
+      document.querySelectorAll(".tabBtn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll(".tabBtn").forEach((b) => b.classList.remove("active"));
+          document.querySelectorAll(".tabPanel").forEach((p) => p.classList.remove("active"));
+          btn.classList.add("active");
+          document.getElementById(btn.dataset.tab).classList.add("active");
+        });
+      });
+
+      // ---------- result rendering ----------
+      function clearResult() {
+        document.getElementById("result").innerHTML = "";
+      }
+
+      function addResultRow(html, ok) {
+        const row = document.createElement("div");
+        row.className = "result-row " + (ok ? "ok" : "error");
+        row.innerHTML = html;
+        document.getElementById("result").prepend(row);
+      }
+
+      function copyBtn(text) {
+        const id = "copy_" + Math.random().toString(36).slice(2);
+        setTimeout(() => {
+          const el = document.getElementById(id);
+          if (el) {
+            el.addEventListener("click", () => {
+              navigator.clipboard.writeText(text).then(() => {
+                el.textContent = "copied!";
+                setTimeout(() => (el.textContent = "copy"), 1200);
+              });
+            });
+          }
+        }, 0);
+        return '<button class="copy-btn secondary" id="' + id + '">copy</button>';
+      }
+
+      // Parses rustypaste's response body: one or more "url\n" or "url\nPassword: pw\n" blocks.
+      function parseUploadResponse(text) {
+        const lines = text.split("\n").filter((l) => l.length > 0);
+        const items = [];
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].startsWith("Password: ")) continue;
+          const entry = { url: lines[i], password: null };
+          if (lines[i + 1] && lines[i + 1].startsWith("Password: ")) {
+            entry.password = lines[i + 1].slice("Password: ".length);
+          }
+          items.push(entry);
+        }
+        return items;
+      }
+
+      function friendlyError(status, text, context) {
+        if (status === 401) return "invalid or missing auth token";
+        if (status === 409) return "that custom name is already taken — try another or leave it blank";
+        if (status === 413) return "file too large (over the server's per-upload cap)";
+        if (status === 507) return "server storage is full (total upload cap reached)";
+        if (status === 404 && context === "delete") return "no such file (already deleted or expired)";
+        if (status === 404 && context === "unlock") return "wrong password, or the file doesn't exist / expired";
+        if (status === 404 && context === "list") return "file listing is disabled on the server";
+        return "HTTP " + status + (text ? ": " + text : "");
+      }
+
+      function renderUploadResult(text) {
+        const items = parseUploadResponse(text);
+        items.forEach((item) => {
+          let html = '<a href="' + item.url + '" target="_blank">' + item.url + "</a>" + copyBtn(item.url);
+          html += ' &nbsp; <a href="' + item.url + '?download=true">force download</a>';
+          if (item.password) {
+            html +=
+              '<div class="result-pw">Password: ' +
+              item.password +
+              "</div>" +
+              copyBtn(item.password) +
+              '<div class="warn">This password is unrecoverable and cannot be changed. Use the "unlock" tool in Manage to access this file — clicking the link directly will 404.</div>';
+          }
+          addResultRow(html, true);
+        });
+        refreshFileList(true);
+      }
+
+      // ---------- expiry helper ----------
+      function buildHeaders(authToken, customName, expireChecked, expireValue) {
+        const headers = { Authorization: authToken };
+        if (customName) headers["filename"] = customName;
+        if (expireChecked && expireValue) headers["expire"] = expireValue;
+        return headers;
+      }
+
+      // ---------- drop zone / multi-file ----------
+      const dropZone = document.getElementById("dropZone");
+      const dropZoneLabel = document.getElementById("dropZoneLabel");
+      const fileInput = document.getElementById("fileInput");
+      const customNameFile = document.getElementById("customNameFile");
+
+      function refreshDropLabel() {
+        const files = fileInput.files;
+        if (!files || files.length === 0) {
+          dropZoneLabel.textContent = "Drag & drop file(s) here, or click to browse";
+          dropZone.classList.remove("has-file");
+          customNameFile.disabled = false;
+          customNameFile.placeholder = "custom name (optional, single file only)";
+        } else if (files.length === 1) {
+          dropZoneLabel.textContent = files[0].name + " (" + Math.round(files[0].size / 1024) + " KB)";
+          dropZone.classList.add("has-file");
+          customNameFile.disabled = false;
+          customNameFile.placeholder = "custom name (optional, single file only)";
+        } else {
+          dropZoneLabel.textContent = files.length + " files selected";
+          dropZone.classList.add("has-file");
+          customNameFile.disabled = true;
+          customNameFile.value = "";
+          customNameFile.placeholder = "custom name disabled — multiple files selected";
+        }
+      }
+
+      dropZone.addEventListener("click", () => fileInput.click());
+      fileInput.addEventListener("change", refreshDropLabel);
+
+      dropZone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dropZone.classList.add("dragover");
+      });
+      dropZone.addEventListener("dragleave", () => {
+        dropZone.classList.remove("dragover");
+      });
+      dropZone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropZone.classList.remove("dragover");
+        if (e.dataTransfer.files.length > 0) {
+          fileInput.files = e.dataTransfer.files;
+          refreshDropLabel();
+        }
+      });
+
+      function shareFile() {
+        const authToken = getToken();
+        if (!authToken) return;
+        const files = fileInput.files;
+        if (!files || files.length === 0) {
+          alert("Please select at least one file");
+          return;
+        }
+        const mode = document.querySelector('input[name="fileMode"]:checked').value;
+        const formData = new FormData();
+        for (const f of files) {
+          formData.append(mode, f);
+        }
+        const customName = files.length === 1 ? customNameFile.value.trim() : "";
+        const expireChecked = document.getElementById("expireCheckFile").checked;
+        const expireValue = document.getElementById("expireValueFile").value.trim();
+
+        const progressWrap = document.getElementById("progressWrap");
+        const progressBar = document.getElementById("progressBar");
+        progressWrap.style.display = "block";
+        progressBar.style.width = "0%";
+        progressBar.textContent = "0%";
+        clearResult();
+
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/");
+        xhr.setRequestHeader("Authorization", authToken);
+        if (expireChecked && expireValue) xhr.setRequestHeader("expire", expireValue);
+        if (customName) xhr.setRequestHeader("filename", customName);
+
+        xhr.upload.addEventListener("progress", (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            progressBar.style.width = pct + "%";
+            progressBar.textContent = pct + "%";
+          }
+        });
+
+        xhr.addEventListener("load", () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            progressBar.style.width = "100%";
+            progressBar.textContent = "Upload complete";
+            renderUploadResult(xhr.responseText);
+            setTimeout(() => {
+              progressWrap.style.display = "none";
+              progressBar.style.width = "0%";
+              progressBar.textContent = "0%";
+              fileInput.value = "";
+              customNameFile.value = "";
+              refreshDropLabel();
+            }, 1200);
+          } else {
+            progressWrap.style.display = "none";
+            addResultRow(friendlyError(xhr.status, xhr.responseText, "upload"), false);
+          }
+        });
+
+        xhr.addEventListener("error", () => {
+          progressWrap.style.display = "none";
+          addResultRow("network error", false);
+        });
+
+        xhr.send(formData);
+      }
+
+      // ---------- text paste ----------
+      function sharePaste() {
+        const authToken = getToken();
+        if (!authToken) return;
+        const textInput = document.getElementById("textInput");
+        const customNamePaste = document.getElementById("customNamePaste");
+        const text = textInput.value;
+        if (!text) {
+          alert("Please enter some text");
+          return;
+        }
+        const blob = new Blob([text], { type: "text/plain" });
+        const formData = new FormData();
+        formData.append("file", blob, "paste.txt");
+        const headers = buildHeaders(
+          authToken,
+          customNamePaste.value.trim(),
+          document.getElementById("expireCheckText").checked,
+          document.getElementById("expireValueText").value.trim()
+        );
+        clearResult();
+        fetch("/", { method: "POST", headers: headers, body: formData })
+          .then(async (response) => {
+            const text = await response.text();
+            if (!response.ok) {
+              addResultRow(friendlyError(response.status, text, "upload"), false);
+              return;
+            }
+            renderUploadResult(text);
+            textInput.value = "";
+            customNamePaste.value = "";
+          })
+          .catch(() => addResultRow("network error", false));
+      }
+
+      // ---------- links: shorten / oneshot url / remote ----------
+      function submitLink(field) {
+        const authToken = getToken();
+        if (!authToken) return;
+        const urlInput = document.getElementById("urlInput");
+        const url = urlInput.value.trim();
+        if (!url) {
+          alert("Please enter a URL");
+          return;
+        }
+        const formData = new FormData();
+        formData.append(field, url);
+        const headers = buildHeaders(
+          authToken,
+          document.getElementById("customNameUrl").value.trim(),
+          document.getElementById("expireCheckUrl").checked,
+          document.getElementById("expireValueUrl").value.trim()
+        );
+        clearResult();
+        addResultRow("working...", true);
+        fetch("/", { method: "POST", headers: headers, body: formData })
+          .then(async (response) => {
+            const text = await response.text();
+            clearResult();
+            if (!response.ok) {
+              addResultRow(friendlyError(response.status, text, "upload"), false);
+              return;
+            }
+            renderUploadResult(text);
+            urlInput.value = "";
+            document.getElementById("customNameUrl").value = "";
+          })
+          .catch(() => {
+            clearResult();
+            addResultRow("network error (remote fetches can be slow or flaky — try again)", false);
+          });
+      }
+
+      // ---------- manage: delete ----------
+      function stripOrigin(target) {
+        target = target.trim();
+        try {
+          const u = new URL(target);
+          return u.pathname.replace(/^\//, "");
+        } catch (e) {
+          return target;
+        }
+      }
+
+      function deleteFile(nameOverride, afterDelete) {
+        const authToken = getToken();
+        if (!authToken) return;
+        const targetInput = document.getElementById("deleteTarget");
+        const name = nameOverride !== undefined ? nameOverride : stripOrigin(targetInput.value);
+        if (!name) {
+          alert("Please enter a filename or URL");
+          return;
+        }
+        if (!nameOverride) clearResult();
+        return fetch("/" + encodeURIComponent(name), {
+          method: "DELETE",
+          headers: { Authorization: authToken },
+        })
+          .then(async (response) => {
+            const text = await response.text();
+            if (!response.ok) {
+              addResultRow(friendlyError(response.status, text, "delete"), false);
+              return false;
+            }
+            addResultRow(name + " — deleted", true);
+            if (!nameOverride) targetInput.value = "";
+            if (afterDelete) afterDelete();
+            refreshFileList(true);
+            return true;
+          })
+          .catch(() => {
+            addResultRow("network error", false);
+            return false;
+          });
+      }
+
+      // ---------- manage: browse & delete (uses /list) ----------
+      function humanSize(bytes) {
+        if (bytes === null || bytes === undefined) return "";
+        if (bytes < 1024) return bytes + " B";
+        const units = ["KB", "MB", "GB", "TB"];
+        let val = bytes;
+        let i = -1;
+        do {
+          val /= 1024;
+          i++;
+        } while (val >= 1024 && i < units.length - 1);
+        return val.toFixed(val < 10 ? 1 : 0) + " " + units[i];
+      }
+
+      function typeBadgeLabel(itemType) {
+        return { file: "file", oneshot: "one-shot", url: "url", oneshot_url: "one-shot url" }[itemType] || itemType;
+      }
+
+      function refreshFileList(quiet) {
+        const authToken = document.getElementById("authToken").value;
+        const listEl = document.getElementById("fileList");
+        const statusEl = document.getElementById("listStatus");
+        if (!authToken) {
+          if (!quiet) statusEl.textContent = "enter your auth token above first";
+          return;
+        }
+        if (!quiet) statusEl.textContent = "loading...";
+        fetch("/list", { headers: { Authorization: authToken } })
+          .then(async (response) => {
+            if (!response.ok) {
+              if (response.status === 404) {
+                statusEl.textContent = "file listing is disabled on the server";
+              } else if (response.status === 401) {
+                statusEl.textContent = "invalid or missing auth token";
+              } else {
+                statusEl.textContent = "HTTP " + response.status;
+              }
+              listEl.innerHTML = "";
+              return;
+            }
+            const items = await response.json();
+            // creation_date_utc is unreliable on this host's filesystem (comes back null for
+            // every entry — fs::metadata().created() isn't populated here), so sort by name
+            // instead of pretending to offer newest-first.
+            items.sort((a, b) => String(a.file_name).localeCompare(String(b.file_name)));
+            statusEl.textContent = items.length + " item" + (items.length === 1 ? "" : "s");
+            listEl.innerHTML = "";
+            items.forEach((item) => {
+              const name = item.file_name;
+              const url = "/" + encodeURIComponent(name);
+              const row = document.createElement("div");
+              row.className = "fileRow";
+              const expires = item.expires_at_utc ? "expires " + item.expires_at_utc : "kept forever";
+              const size = item.file_size !== null && item.file_size !== undefined ? humanSize(item.file_size) : "";
+              row.innerHTML =
+                '<span class="typeBadge">' +
+                typeBadgeLabel(item.item_type) +
+                '</span><a class="fname" href="' +
+                url +
+                '" target="_blank">' +
+                name +
+                '</a><span class="fmeta">' +
+                [size, expires].filter(Boolean).join(" · ") +
+                "</span>";
+              const delBtn = document.createElement("button");
+              delBtn.className = "danger";
+              delBtn.textContent = "delete";
+              delBtn.addEventListener("click", () => deleteFile(name));
+              row.appendChild(delBtn);
+              listEl.appendChild(row);
+            });
+          })
+          .catch(() => {
+            statusEl.textContent = "network error";
+          });
+      }
+
+      // ---------- manage: unlock protected file ----------
+      function unlockFile() {
+        const targetInput = document.getElementById("unlockTarget");
+        const pwInput = document.getElementById("unlockPassword");
+        const name = stripOrigin(targetInput.value);
+        const pw = pwInput.value;
+        const output = document.getElementById("unlockOutput");
+        if (!name || !pw) {
+          alert("Please enter both a filename/URL and the password");
+          return;
+        }
+        output.style.display = "none";
+        output.textContent = "";
+        clearResult();
+        fetch("/" + encodeURIComponent(name), {
+          headers: { Authorization: "Bearer " + pw },
+        })
+          .then(async (response) => {
+            if (!response.ok) {
+              addResultRow(friendlyError(response.status, "", "unlock"), false);
+              return;
+            }
+            const contentType = response.headers.get("content-type") || "";
+            if (contentType.startsWith("text/") || contentType.includes("json")) {
+              const text = await response.text();
+              output.textContent = text;
+              output.style.display = "block";
+              addResultRow("unlocked — shown below", true);
+            } else {
+              const blob = await response.blob();
+              const blobUrl = URL.createObjectURL(blob);
+              addResultRow(
+                'unlocked — <a href="' + blobUrl + '" download="' + name + '">click to download</a>',
+                true
+              );
+            }
+          })
+          .catch(() => addResultRow("network error", false));
+      }
+    </script>
+  </body>
+</html>
