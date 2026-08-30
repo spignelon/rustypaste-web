@@ -8,6 +8,16 @@ Dark mode by default, mobile-responsive, and covers every paste type the rustypa
 supports: normal files, one-shot files/links, password-protected files, URL shortening, and
 remote-URL fetching, plus browsing and deleting what you've uploaded.
 
+## Screenshots
+
+| Dark mode (default) | Light mode |
+|---|---|
+| ![Dark mode - File tab](screenshots/dark-file-tab.png) | ![Light mode - File tab](screenshots/light-file-tab.png) |
+
+Manage tab — browse & delete, delete by name/URL, and unlock a protected file:
+
+![Dark mode - Manage tab](screenshots/dark-manage-tab.png)
+
 ## Features
 
 - **File uploads** — drag-and-drop or click to browse, multiple files in one request, live
