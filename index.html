@@ -3,6 +3,7 @@
     <title>rustypaste-web</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2314161a'/%3E%3Crect x='16' y='14' width='32' height='40' rx='5' fill='none' stroke='%23eee' stroke-width='4'/%3E%3Crect x='25' y='9' width='14' height='9' rx='3' fill='%2314161a' stroke='%23eee' stroke-width='4'/%3E%3Cpath d='M23 30h18M23 38h18M23 46h11' stroke='%23eee' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E" />
     <script>
       // Runs before the stylesheet paints, so a returning light-mode visitor
       // never sees a flash of the (default) dark theme first. Dark itself
@@ -366,24 +367,39 @@
       .fileRow {
         display: flex;
         align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
+        gap: 10px;
         background-color: var(--panel2);
         border-radius: 6px;
         padding: 8px 10px;
         margin-bottom: 6px;
         font-size: 13px;
       }
+      .fileRow .fbody {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .fileRow .ftop {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
       .fileRow .fname {
-        flex: 1 1 160px;
         min-width: 0;
         word-break: break-all;
         color: var(--text);
       }
       .fileRow .fmeta {
+        display: block;
+        margin-top: 3px;
         color: var(--muted);
         font-size: 12px;
-        white-space: nowrap;
+      }
+      .fileRow button {
+        flex: none;
+        margin: 0;
+        padding: 6px 12px;
+        font-size: 13px;
       }
       .typeBadge {
         display: inline-block;
@@ -393,6 +409,10 @@
         background-color: var(--border);
         color: var(--text);
         white-space: nowrap;
+      }
+      .typeBadge.paste {
+        background-color: var(--ok);
+        color: #fff;
       }
       .listControls {
         display: flex;
@@ -476,13 +496,19 @@ Files auto-delete after 48 hours by default — uncheck the box before uploading
         </div>
 
         <input type="text" id="customNameFile" placeholder="custom name (optional, single file only)" autocomplete="off" />
+        <div class="expiryRow" style="margin-bottom: 0">
+          <label><input type="checkbox" id="keepNameFile" checked /> keep original file name</label>
+        </div>
+        <p class="hint" id="keepNameHint">
+          Unchecked = random name. If the name is taken, a number is added (abc.pdf &rarr; abc_1.pdf).
+        </p>
 
         <div class="expiryRow">
           <label><input type="checkbox" id="expireCheckFile" checked /> auto-delete after</label>
           <input type="text" id="expireValueFile" value="48hour" />
         </div>
 
-        <button onclick="shareFile()">upload</button>
+        <button id="uploadBtn" onclick="shareFile()">upload</button>
         <div id="progressWrap"><div id="progressBar">0%</div></div>
       </div>
 
@@ -504,7 +530,7 @@ Files auto-delete after 48 hours by default — uncheck the box before uploading
         <input type="text" id="urlInput" placeholder="https://example.com/some/long/url" autocomplete="off" />
         <input type="text" id="customNameUrl" placeholder="custom name (optional)" autocomplete="off" />
         <div class="expiryRow">
-          <label><input type="checkbox" id="expireCheckUrl" checked /> auto-delete after</label>
+          <label><input type="checkbox" id="expireCheckUrl" /> auto-delete after</label>
           <input type="text" id="expireValueUrl" value="48hour" />
         </div>
         <button onclick="submitLink('url')">shorten</button>
@@ -682,7 +708,7 @@ Files auto-delete after 48 hours by default — uncheck the box before uploading
         return "HTTP " + status + (text ? ": " + text : "");
       }
 
-      function renderUploadResult(text) {
+      function renderUploadResult(text, skipListRefresh) {
         const items = parseUploadResponse(text);
         items.forEach((item) => {
           let html = '<a href="' + item.url + '" target="_blank">' + item.url + "</a>" + copyBtn(item.url);
@@ -697,7 +723,7 @@ Files auto-delete after 48 hours by default — uncheck the box before uploading
           }
           addResultRow(html, true);
         });
-        refreshFileList(true);
+        if (!skipListRefresh) refreshFileList(true);
       }
 
       // ---------- expiry helper ----------
@@ -754,69 +780,176 @@ Files auto-delete after 48 hours by default — uncheck the box before uploading
         }
       });
 
-      function shareFile() {
+      // ---------- file names: sanitising + numbering ----------
+      // The server only honours a `filename` header made of visible ASCII, turns spaces
+      // into "_" in the URL it returns (but not on disk), and uses the name in a glob
+      // lookup — so names are cleaned up here before they are sent.
+      const RESERVED_NAMES = new Set(["list", "url", "oneshot", "oneshot_url", "protected"]);
+      const NAME_EXT_RE = /^(.*?[^.])(\.tar\.[A-Za-z0-9]+|\.[A-Za-z0-9]+)$/;
+
+      function splitName(name) {
+        const m = name.match(NAME_EXT_RE);
+        return m ? { stem: m[1], ext: m[2] } : { stem: name, ext: "" };
+      }
+
+      function sanitizeFileName(raw) {
+        let n = String(raw).split(/[\\/]/).pop();
+        n = n.normalize("NFKD").replace(/[̀-ͯ]/g, "");
+        n = n.replace(/[^A-Za-z0-9._()+,=@~-]/g, "_");
+        if (!n || /^\.+$/.test(n)) n = "file";
+        if (n.length > 180) {
+          const { stem, ext } = splitName(n);
+          n = stem.slice(0, 180 - ext.length) + ext;
+        }
+        return n;
+      }
+
+      function isNameTaken(name, taken) {
+        return taken.has(name) || RESERVED_NAMES.has(name);
+      }
+
+      // abc.pdf -> abc.pdf, or abc_1.pdf, abc_2.pdf ... if the earlier ones are taken.
+      function uniqueName(name, taken) {
+        if (!isNameTaken(name, taken)) return name;
+        const { stem, ext } = splitName(name);
+        for (let i = 1; i < 100000; i++) {
+          const candidate = stem + "_" + i + ext;
+          if (!isNameTaken(candidate, taken)) return candidate;
+        }
+        throw new Error("no free name");
+      }
+
+      // Every name the server already has (files, one-shots, urls). Password-protected files
+      // are not in /list; a clash with one of those is caught by the 409 retry in shareFile().
+      async function fetchTakenNames(authToken) {
+        const taken = new Set();
+        try {
+          const response = await fetch("/list", { headers: { Authorization: authToken } });
+          if (response.ok) (await response.json()).forEach((item) => taken.add(String(item.file_name)));
+        } catch (e) {
+          // fall back to the 409 retry
+        }
+        return taken;
+      }
+
+      // One XHR (kept for upload progress). Resolves {status, text}; rejects on network error.
+      function sendUpload(authToken, field, files, headerName, expireChecked, expireValue, onProgress) {
+        return new Promise((resolve, reject) => {
+          const formData = new FormData();
+          for (const f of files) formData.append(field, f);
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", "/");
+          xhr.setRequestHeader("Authorization", authToken);
+          if (expireChecked && expireValue) xhr.setRequestHeader("expire", expireValue);
+          if (headerName) xhr.setRequestHeader("filename", headerName);
+          xhr.upload.addEventListener("progress", (e) => {
+            if (e.lengthComputable) onProgress(e.loaded);
+          });
+          xhr.addEventListener("load", () => resolve({ status: xhr.status, text: xhr.responseText }));
+          xhr.addEventListener("error", () => reject(new Error("network error")));
+          xhr.send(formData);
+        });
+      }
+
+      async function shareFile() {
         const authToken = getToken();
         if (!authToken) return;
-        const files = fileInput.files;
-        if (!files || files.length === 0) {
+        const files = Array.from(fileInput.files || []);
+        if (files.length === 0) {
           alert("Please select at least one file");
           return;
         }
         const mode = document.querySelector('input[name="fileMode"]:checked').value;
-        const formData = new FormData();
-        for (const f of files) {
-          formData.append(mode, f);
-        }
-        const customName = files.length === 1 ? customNameFile.value.trim() : "";
+        const rawCustom = files.length === 1 ? customNameFile.value.trim() : "";
+        const customName = rawCustom ? sanitizeFileName(rawCustom) : "";
+        const keepName = document.getElementById("keepNameFile").checked;
         const expireChecked = document.getElementById("expireCheckFile").checked;
         const expireValue = document.getElementById("expireValueFile").value.trim();
 
+        const uploadBtn = document.getElementById("uploadBtn");
         const progressWrap = document.getElementById("progressWrap");
         const progressBar = document.getElementById("progressBar");
+        const totalBytes = files.reduce((n, f) => n + f.size, 0) || 1;
+        let doneBytes = 0;
+        const setProgress = (loaded) => {
+          const pct = Math.min(100, Math.round(((doneBytes + loaded) / totalBytes) * 100));
+          progressBar.style.width = pct + "%";
+          progressBar.textContent = pct + "%";
+        };
+        uploadBtn.disabled = true;
         progressWrap.style.display = "block";
-        progressBar.style.width = "0%";
-        progressBar.textContent = "0%";
+        setProgress(0);
         clearResult();
 
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "/");
-        xhr.setRequestHeader("Authorization", authToken);
-        if (expireChecked && expireValue) xhr.setRequestHeader("expire", expireValue);
-        if (customName) xhr.setRequestHeader("filename", customName);
-
-        xhr.upload.addEventListener("progress", (e) => {
-          if (e.lengthComputable) {
-            const pct = Math.round((e.loaded / e.total) * 100);
-            progressBar.style.width = pct + "%";
-            progressBar.textContent = pct + "%";
-          }
-        });
-
-        xhr.addEventListener("load", () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            progressBar.style.width = "100%";
-            progressBar.textContent = "Upload complete";
-            renderUploadResult(xhr.responseText);
-            setTimeout(() => {
-              progressWrap.style.display = "none";
-              progressBar.style.width = "0%";
-              progressBar.textContent = "0%";
-              fileInput.value = "";
-              customNameFile.value = "";
-              refreshDropLabel();
-            }, 1200);
+        let anyOk = false;
+        let allOk = true;
+        try {
+          if (!customName && !keepName) {
+            // random names: all files in one request, as before
+            const r = await sendUpload(authToken, mode, files, "", expireChecked, expireValue, setProgress);
+            if (r.status >= 200 && r.status < 300) {
+              anyOk = true;
+              renderUploadResult(r.text, true);
+            } else {
+              allOk = false;
+              addResultRow(friendlyError(r.status, r.text, "upload"), false);
+            }
           } else {
-            progressWrap.style.display = "none";
-            addResultRow(friendlyError(xhr.status, xhr.responseText, "upload"), false);
+            // own name: one request per file, so every file can carry its own `filename`
+            const taken = customName ? new Set() : await fetchTakenNames(authToken);
+            for (const file of files) {
+              const base = customName || sanitizeFileName(file.name);
+              let name = customName ? base : uniqueName(base, taken);
+              let r;
+              for (let attempt = 0; attempt < 200; attempt++) {
+                r = await sendUpload(authToken, mode, [file], name, expireChecked, expireValue, setProgress);
+                if (r.status !== 409 || customName) break;
+                taken.add(name); // taken by something /list does not show: try the next number
+                name = uniqueName(base, taken);
+              }
+              doneBytes += file.size;
+              setProgress(0);
+              if (r.status >= 200 && r.status < 300) {
+                anyOk = true;
+                parseUploadResponse(r.text).forEach((it) =>
+                  taken.add(decodeURIComponent(it.url.split("?")[0].split("/").pop()))
+                );
+                renderUploadResult(r.text, true);
+              } else {
+                allOk = false;
+                addResultRow(
+                  (files.length > 1 ? file.name + ": " : "") + friendlyError(r.status, r.text, "upload"),
+                  false
+                );
+                if (r.status === 401) break;
+              }
+            }
           }
-        });
-
-        xhr.addEventListener("error", () => {
-          progressWrap.style.display = "none";
+        } catch (e) {
+          allOk = false;
           addResultRow("network error", false);
-        });
+        }
 
-        xhr.send(formData);
+        uploadBtn.disabled = false;
+        if (anyOk) refreshFileList(true);
+        if (allOk) {
+          customNameFile.value = "";
+          progressBar.style.width = "100%";
+          progressBar.textContent = "Upload complete";
+          setTimeout(() => {
+            progressWrap.style.display = "none";
+            progressBar.style.width = "0%";
+            progressBar.textContent = "0%";
+            // only reset if the user has not already picked other files in the meantime
+            const current = Array.from(fileInput.files || []);
+            if (current.length === files.length && current.every((f, i) => f === files[i])) {
+              fileInput.value = "";
+              refreshDropLabel();
+            }
+          }, 1200);
+        } else {
+          progressWrap.style.display = "none";
+        }
       }
 
       // ---------- text paste ----------
@@ -953,6 +1086,135 @@ Files auto-delete after 48 hours by default — uncheck the box before uploading
         return { file: "file", oneshot: "one-shot", url: "url", oneshot_url: "one-shot url" }[itemType] || itemType;
       }
 
+      // "paste" = text content (what the Text tab makes, or any other text/code file);
+      // everything else is a "file".
+      const TEXT_EXTS = new Set(
+        "txt md markdown rst log csv tsv json yaml yml toml ini conf cfg xml html htm css js mjs ts py sh bash c h cpp rs go java sql tex diff patch".split(" ")
+      );
+
+      function kindOf(name, mime) {
+        if (mime && mime.startsWith("text/")) return "paste";
+        const ext = splitName(name).ext.slice(1).toLowerCase();
+        return TEXT_EXTS.has(ext) ? "paste" : "file";
+      }
+
+      function formatDate(d) {
+        return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+      }
+
+      // The server's /list has no usable upload date here (creation_date_utc is always null
+      // on this filesystem), but serving a file sends its mtime as Last-Modified, which is the
+      // upload time. HEAD is safe for plain files; one-shot and url items are never requested
+      // (a request could use up a one-shot), so they show no date.
+      const metaCache = new Map();
+
+      async function headMeta(item) {
+        const key = item.file_name + "|" + item.file_size + "|" + (item.expires_at_utc || "");
+        if (metaCache.has(key)) return metaCache.get(key);
+        let meta = {};
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 8000);
+        try {
+          const response = await fetch("/" + encodeURIComponent(item.file_name), {
+            method: "HEAD",
+            signal: ctl.signal,
+          });
+          if (response.ok) {
+            const lm = response.headers.get("last-modified");
+            const d = lm ? new Date(lm) : null;
+            meta = {
+              date: d && !isNaN(d) ? d : null,
+              mime: (response.headers.get("content-type") || "").split(";")[0],
+            };
+            metaCache.set(key, meta);
+          }
+        } catch (e) {
+          // leave the date blank
+        } finally {
+          clearTimeout(timer);
+        }
+        return meta;
+      }
+
+      async function runPool(items, limit, fn) {
+        let next = 0;
+        const worker = async () => {
+          while (next < items.length) await fn(items[next++]);
+        };
+        await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+      }
+
+      function renderFileList(items, metas) {
+        const listEl = document.getElementById("fileList");
+        listEl.innerHTML = "";
+        const dateOf = (it) => (metas.get(it) && metas.get(it).date) || null;
+        // newest first; items without a date go last, by name
+        const sorted = items.slice().sort((a, b) => {
+          const da = dateOf(a);
+          const db = dateOf(b);
+          if (da && db) return db - da || String(a.file_name).localeCompare(String(b.file_name));
+          if (da) return -1;
+          if (db) return 1;
+          return String(a.file_name).localeCompare(String(b.file_name));
+        });
+        sorted.forEach((item) => {
+          const name = String(item.file_name);
+          const meta = metas.get(item) || {};
+          const row = document.createElement("div");
+          row.className = "fileRow";
+          const body = document.createElement("div");
+          body.className = "fbody";
+          const top = document.createElement("div");
+          top.className = "ftop";
+          body.appendChild(top);
+          row.appendChild(body);
+
+          const addBadge = (text, cls, title) => {
+            const b = document.createElement("span");
+            b.className = "typeBadge" + (cls ? " " + cls : "");
+            b.textContent = text;
+            if (title) b.title = title;
+            top.appendChild(b);
+          };
+          if (item.item_type === "file" || item.item_type === "oneshot") {
+            const kind = kindOf(name, meta.mime);
+            addBadge(kind, kind === "paste" ? "paste" : "", meta.mime || "");
+          }
+          if (item.item_type !== "file") addBadge(typeBadgeLabel(item.item_type));
+
+          const link = document.createElement("a");
+          link.className = "fname";
+          link.href = "/" + encodeURIComponent(name);
+          link.target = "_blank";
+          link.textContent = name;
+          top.appendChild(link);
+
+          // second line: uploaded date · size · expiry
+          const info = [meta.date ? formatDate(meta.date) : "no date"];
+          if (item.file_size !== null && item.file_size !== undefined) info.push(humanSize(item.file_size));
+          if (item.expires_at_utc) {
+            const e = new Date(item.expires_at_utc);
+            info.push("expires " + (isNaN(e) ? item.expires_at_utc : formatDate(e)));
+          } else {
+            info.push("kept forever");
+          }
+          const fmeta = document.createElement("span");
+          fmeta.className = "fmeta";
+          fmeta.textContent = info.join(" · ");
+          fmeta.title = meta.date ? "uploaded " + formatDate(meta.date) : "the server only reports an upload date for plain files";
+          body.appendChild(fmeta);
+
+          const delBtn = document.createElement("button");
+          delBtn.className = "danger";
+          delBtn.textContent = "delete";
+          delBtn.addEventListener("click", () => deleteFile(name));
+          row.appendChild(delBtn);
+          listEl.appendChild(row);
+        });
+      }
+
+      let listRun = 0;
+
       function refreshFileList(quiet) {
         const authToken = document.getElementById("authToken").value;
         const listEl = document.getElementById("fileList");
@@ -961,6 +1223,7 @@ Files auto-delete after 48 hours by default — uncheck the box before uploading
           if (!quiet) statusEl.textContent = "enter your auth token above first";
           return;
         }
+        const run = ++listRun;
         if (!quiet) statusEl.textContent = "loading...";
         fetch("/list", { headers: { Authorization: authToken } })
           .then(async (response) => {
@@ -976,36 +1239,26 @@ Files auto-delete after 48 hours by default — uncheck the box before uploading
               return;
             }
             const items = await response.json();
-            // creation_date_utc is unreliable on this host's filesystem (comes back null for
-            // every entry — fs::metadata().created() isn't populated here), so sort by name
-            // instead of pretending to offer newest-first.
-            items.sort((a, b) => String(a.file_name).localeCompare(String(b.file_name)));
-            statusEl.textContent = items.length + " item" + (items.length === 1 ? "" : "s");
-            listEl.innerHTML = "";
-            items.forEach((item) => {
-              const name = item.file_name;
-              const url = "/" + encodeURIComponent(name);
-              const row = document.createElement("div");
-              row.className = "fileRow";
-              const expires = item.expires_at_utc ? "expires " + item.expires_at_utc : "kept forever";
-              const size = item.file_size !== null && item.file_size !== undefined ? humanSize(item.file_size) : "";
-              row.innerHTML =
-                '<span class="typeBadge">' +
-                typeBadgeLabel(item.item_type) +
-                '</span><a class="fname" href="' +
-                url +
-                '" target="_blank">' +
-                name +
-                '</a><span class="fmeta">' +
-                [size, expires].filter(Boolean).join(" · ") +
-                "</span>";
-              const delBtn = document.createElement("button");
-              delBtn.className = "danger";
-              delBtn.textContent = "delete";
-              delBtn.addEventListener("click", () => deleteFile(name));
-              row.appendChild(delBtn);
-              listEl.appendChild(row);
+            if (run !== listRun) return;
+            const count = items.length + " item" + (items.length === 1 ? "" : "s");
+            const metas = new Map();
+            items.forEach((it) => {
+              const key = it.file_name + "|" + it.file_size + "|" + (it.expires_at_utc || "");
+              if (metaCache.has(key)) metas.set(it, metaCache.get(key));
             });
+            renderFileList(items, metas);
+            const todo = items.filter((it) => it.item_type === "file" && !metas.has(it));
+            if (todo.length === 0) {
+              statusEl.textContent = count;
+              return;
+            }
+            statusEl.textContent = count + " · loading dates...";
+            await runPool(todo, 6, async (it) => {
+              metas.set(it, await headMeta(it));
+            });
+            if (run !== listRun) return;
+            renderFileList(items, metas);
+            statusEl.textContent = count;
           })
           .catch(() => {
             statusEl.textContent = "network error";

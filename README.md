@@ -28,15 +28,25 @@ Manage tab — browse & delete, delete by name/URL, and unlock a protected file:
 - **URL tools** — shorten a long URL, make a one-shot redirect link, or have the server fetch and
   re-host a remote file under your own paste server
 - **Expiry control** — a checkbox + duration field on every upload type; checked by default at
-  `48hour`, uncheck it to keep the paste forever (any unit rustypaste supports: `ns` `us` `ms`
-  `sec` `min` `hour` `day` `week` `month` `year`)
-- **Custom names** — override the auto-generated filename on any upload
-- **Browse & delete** — lists your uploads (needs `expose_list = true` on the server) with
-  one-click delete per item
+  `48hour` for files (off for text pastes and links), uncheck it to keep the paste forever (any
+  unit rustypaste supports: `ns` `us` `ms` `sec` `min` `hour` `day` `week` `month` `year`)
+- **File names** — a "keep original file name" checkbox (on by default) uploads `abc.pdf` as
+  `abc.pdf`; if that name is already taken it becomes `abc_1.pdf`, `abc_2.pdf`, … Untick it for
+  rustypaste's random names. Works for every file mode and for multi-file uploads (one request per
+  file). Names are made safe for the server first (spaces and odd characters become `_`, accents
+  are stripped). You can also type a custom name for a single file or paste, which is used exactly
+  (a taken custom name is reported, not renumbered). No server changes needed — the UI reads
+  `/list` to pick a free name and retries on `409`.
+- **Browse & delete** — lists your uploads (needs `expose_list = true` on the server), newest
+  first, each with a `file` / `paste` (text) badge, `one-shot` / `url` badges, upload date, size
+  and expiry, plus one-click delete. The upload date comes from the `Last-Modified` header of a
+  `HEAD` request per plain file (rustypaste's `/list` often returns no creation date); one-shot
+  and URL items are never requested, so they show "no date"
 - **Unlock tool** — password-protected files return a `404` on a plain browser click (by rustypaste
   design, to avoid leaking which files exist) rather than a login prompt, so this UI includes a
   dedicated "enter URL + password" tool that fetches the file properly
 - **Dark mode** — on by default, with a sun/moon toggle (persisted per-browser via `localStorage`)
+- **Favicon** — built in (inline SVG), so no extra file or `/favicon.ico` route is needed
 - **Mobile-friendly** — fits phone screens properly, no pinch-zooming required
 - **Auth token memory** — optional "remember on this device" checkbox, off by default, stored in
   `localStorage`
@@ -87,7 +97,8 @@ a bug in this UI. Use the manual "delete by name/URL" tool for those.
 Everything here is plain `fetch`/`XMLHttpRequest` against rustypaste's existing HTTP API — no
 special backend, no proxy. Uploads are `multipart/form-data` POSTs to `/`, where the form field
 *name* selects the paste type (`file`, `oneshot`, `protected`, `url`, `oneshot_url`, `remote`);
-expiry and custom filenames are set via the `expire` and `filename` request headers; delete is a
+expiry and file names are set via the `expire` and `filename` request headers (without a `filename`
+header the server picks a random name — this is why a plain upload of `abc.pdf` gets renamed); delete is a
 `DELETE /{name}` request with the token in `Authorization`. See rustypaste's own
 [README](https://github.com/orhun/rustypaste#usage) for the full API if you want to script against
 it directly.
